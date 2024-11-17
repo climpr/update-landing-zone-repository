@@ -1,0 +1,140 @@
+name: Update Landing Zone Repository
+description: Updates the files in a Landing Zone repository.
+
+inputs:
+  landing-zone-path:
+    description: Path to the Landing Zone directory.
+    required: true
+
+  repo-sources-path:
+    description: Path to the 'repo-sources' directory.
+    required: true
+
+  github-token:
+    description: The token for the GitHub app that is allowed to create and update repositories in the organization.
+    required: true
+
+outputs:
+  deleted-files:
+    description: A JSON list of the deleted files relative to the 'path' input parameter.
+    value: ${{ steps.delete-files.outputs.deleted-files }}
+
+  deleted-directories:
+    description: A JSON list of the deleted directories relative to the 'path' input parameter.
+    value: ${{ steps.delete-files.outputs.deleted-directories }}
+
+runs:
+  using: composite
+  steps:
+    #* Get Landing Zone configuration
+    - name: Get Landing Zone Repository
+      id: lz-config
+      shell: pwsh
+      env:
+        landingZonePath: ${{ inputs.landing-zone-path }}
+        repoSourcesPath: ${{ inputs.repo-sources-path }}
+      run: |
+        #* Get Landing Zone configuration
+        $lzConfig = Get-Content -Path "$env:landingZonePath/metadata.json" | ConvertFrom-Json -AsHashtable -Depth 4
+
+        $sourceSync            = $lzConfig.repoSource -and $lzConfig.repoSource.source -and !$lzConfig.repoSource.disabled -and !$lzConfig.decommissioned
+        $templateRepoSync      = !$sourceSync -and $lzConfig.repoTemplate -and !$lzConfig.disableWorkloadRepoTemplateSync
+        $deleteFilesEnabled    = $sourceSync -or $templateRepoSync
+        $sourcePath            = $sourceSync ? "$env:repoSourcesPath/$($lzConfig.repoSource.source)/contents" : $templateRepoSync ? "template-repo" : ""
+        $deleteFilesConfigPath = $sourceSync ? "$env:repoSourcesPath/$($lzConfig.repoSource.source)/delete-files.json" : $templateRepoSync ? "template-repo/delete-files.json" : ""
+
+        #* Write outputs
+        $outputs = @{
+          "repository"               = "$($lzConfig.organization)/$($lzConfig.repoName)"
+          "source-sync"              = $sourceSync
+          "source-path"              = $sourcePath
+          "template-repo-sync"       = $templateRepoSync
+          "template-repo"            = $lzConfig.repoTemplate
+          "delete-files-enabled"     = $sourceSync -or $templateRepoSync
+          "delete-files-config-path" = $deleteFilesConfigPath
+        }
+
+        foreach ($output in $outputs.Keys) {
+          Write-Output "$output=$($outputs[$output])" >> $env:GITHUB_OUTPUT
+        }
+
+    #* Checkout Landing Zone repository
+    - name: Checkout Landing Zone Repository
+      uses: actions/checkout@v4
+      if: ${{ steps.lz-config.outputs.source-sync == 'true' || steps.lz-config.outputs.template-repo-sync == 'true' || steps.lz-config.outputs.delete-files-enabled == 'true' }}
+      with:
+        path: lz-repo
+        repository: ${{ steps.lz-config.outputs.repository }}
+        token: ${{ inputs.github-token }}
+
+    #* Sync from source repository
+    - name: Checkout Template Repository
+      uses: actions/checkout@v4
+      if: ${{ steps.lz-config.outputs.template-repo-sync == 'true' }}
+      with:
+        path: template-repo
+        repository: ${{ steps.lz-config.outputs.template-repo }}
+        token: ${{ inputs.github-token }}
+
+    #* Copy files from source
+    - name: Copy files from source
+      if: ${{ steps.lz-config.outputs.source-sync == 'true' || steps.lz-config.outputs.template-repo-sync == 'true' }}
+      shell: pwsh
+      env:
+        sourcePath: ${{ steps.lz-config.outputs.source-path }}
+      run: |
+        #* Copy files from source
+        $exclusions = @(".git", "delete-files.json", "delete-files.jsonc")
+        Copy-Item -Path "$env:sourcePath/*" -Destination "lz-repo" -Recurse -Exclude $exclusions -Force
+
+    #* Delete files
+    - name: Delete files
+      id: delete-files
+      if: ${{ steps.lz-config.outputs.delete-files-enabled == 'true' }}
+      shell: pwsh
+      env:
+        configurationPath: ${{ steps.lz-config.outputs.delete-files-config-path }}
+        actionPath: ${{ github.action_path }}
+        debug: ${{ runner.debug }}
+      run: |
+        #* Delete-Files.ps1
+        $DebugPreference = [bool]$env:debug ? "Continue" : "SilentlyContinue"
+
+        #* Test path
+        if (!(Test-Path -Path $env:configurationPath)) {
+          Write-Host "Skipping. No delete-files configuration file found."
+          exit
+        }
+
+        #* Run script
+        $param = @{
+          ConfigurationPath = $env:configurationPath
+          Path              = "lz-repo"
+          Depth             = 10
+        }
+        $result = & "$($env:actionPath)/src/Delete-Files.ps1" @param
+
+        #* Write outputs
+        Write-Output "deleted-files=$(, $result.DeletedFiles | ConvertTo-Json -Compress)" >> $env:GITHUB_OUTPUT
+        Write-Output "deleted-directories=$(, $result.DeletedDirectories | ConvertTo-Json -Compress)" >> $env:GITHUB_OUTPUT
+
+    #* Push changes
+    - name: Push changes
+      if: ${{ steps.lz-config.outputs.source-sync == 'true' || steps.lz-config.outputs.template-repo-sync == 'true' || steps.lz-config.outputs.delete-files-enabled == 'true' }}
+      shell: pwsh
+      run: |
+        #* Push changes
+        git config --global user.name github-actions
+        git config --global user.email github-actions@github.com
+
+        Push-Location "lz-repo"
+        git add .
+        $changes = [bool](git diff --cached --name-only)
+        if ($changes) {
+          git commit -m "[skip ci] Update Landing Zone Repository: Update files"
+          git push -q
+        }
+        else {
+          Write-Host "Skipping. No file changes detected."
+        }
+        Pop-Location
