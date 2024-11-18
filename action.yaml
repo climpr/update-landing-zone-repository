@@ -50,7 +50,7 @@ runs:
           "source-path"              = $sourcePath
           "template-repo-sync"       = $templateRepoSync
           "template-repo"            = $lzConfig.repoTemplate
-          "delete-files-enabled"     = $sourceSync -or $templateRepoSync
+          "delete-files-enabled"     = $deleteFilesEnabled
           "delete-files-config-path" = $deleteFilesConfigPath
         }
 
