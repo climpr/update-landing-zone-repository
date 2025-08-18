@@ -60,7 +60,7 @@ runs:
 
     #* Checkout Landing Zone repository
     - name: Checkout Landing Zone Repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
       if: ${{ steps.lz-config.outputs.source-sync == 'true' || steps.lz-config.outputs.template-repo-sync == 'true' || steps.lz-config.outputs.delete-files-enabled == 'true' }}
       with:
         path: lz-repo
@@ -69,7 +69,7 @@ runs:
 
     #* Sync from source repository
     - name: Checkout Template Repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
       if: ${{ steps.lz-config.outputs.template-repo-sync == 'true' }}
       with:
         path: template-repo
