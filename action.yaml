@@ -35,7 +35,7 @@ runs:
         repoSourcesPath: ${{ inputs.repo-sources-path }}
       run: |
         #* Get Landing Zone configuration
-        $lzConfig = Get-Content -Path "$env:landingZonePath/metadata.json" | ConvertFrom-Json -AsHashtable -Depth 4
+        $lzConfig = Get-Content -Path "$env:landingZonePath/metadata.json" | ConvertFrom-Json -AsHashtable -Depth 10
 
         $sourceSync            = $lzConfig.repoSource -and $lzConfig.repoSource.source -and !$lzConfig.repoSource.disabled -and !$lzConfig.decommissioned
         $templateRepoSync      = !$sourceSync -and $lzConfig.repoTemplate -and !$lzConfig.disableWorkloadRepoTemplateSync
